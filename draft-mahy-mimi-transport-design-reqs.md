@@ -1,0 +1,430 @@
+---
+title: Design Requirements for the More Instant Messaging Interoperability (MIMI) Transport Protocol
+abbrev: MIMI Design Requirements
+docname: draft-mahy-mimi-transport-design-reqs-latest
+ipr: trust200902
+submissiontype: IETF  # also: "independent", "IAB", or "IRTF"area: art
+workgroup: MIMI
+area: art
+category: info
+keyword:
+ - design requirements
+ - design reqs
+ - MIMI transport
+
+stand_alone: yes
+pi: [toc, sortrefs, symrefs]
+
+venue:
+  group: MIMI
+  type: Working Group
+  mail: mimi@ietf.org
+  arch: https://mailarchive.ietf.org/arch/browse/mimi/
+  github: rohan-wire/mimi-groupchat/
+#  latest: https://github.com/rohan-wire/mimi-groupchat/latest
+
+author:
+ -  ins: R. Mahy
+    name: Rohan Mahy
+    organization: Wire
+    email: rohan.mahy@wire.com
+
+normative:
+
+informative:
+
+--- abstract
+
+This document describes design requirements on the More Instant Messaging
+Interoperability (MIMI) Working Group provider-to-provider message transport
+protocol. These requirements are based on the requirements of the group
+encryption using the Messaging Layer Security (MLS) protocol and
+requirements for high volume message transfer which would be needed with
+large messaging providers.
+
+--- middle
+
+# Introduction
+
+As described in the Group Chat Framework for More Instant Messaging
+Interoperability (MIMI) {{?I-D.mahy-mimi-group-chat}}, the basic operations
+of users creating, joining, and leaving a chat map to specific primitives in the
+Messaging Layer Security (MLS) protocol {{!I-D.ietf-mls-protocol}}.
+Some of these primitives have implications on the design of the MIMI
+inter-provider message transport protocol.
+
+This document describes constraints and requirements to be used during the
+design of that protocol.
+
+# Conventions and Definitions
+
+Describe the owning provider thing...
+
+The terms MLS client, MLS group, Proposal, Commit, External Commit,
+external join, group_id, epoch, Welcome, KeyPackage, GroupInfo,
+and GroupContext have the same meanings as in the MLS
+protocol {{!I-D.ietf-mls-protocol}}.
+
+An MLS **KeyPackage** (KP) is used to establish initial keying material in a group,
+analogous to DoubleRatchet prekeys, except one KP is used for a client per group
+but each recipient does not require a separate one.
+
+An MLS **GroupInfo** (GI) object is the information needed for a client to
+externally join an MLS group using an External Commit. The GroupInfo
+changes with each MLS epoch.
+
+The terms in this document and {{?I-D.ralston-mimi-terminology}} have not yet
+been aligned.
+
+**Room**:
+: A room, also known as a chat room or group chat, is a virtual space users
+figuratively enter in order to participate in text-based conferencing.
+When used with MLS it typically has a 1:1 relationship with an MLS group.
+
+**User**:
+: A single human user or automated agent (ex: chat bot) with a distinct identifiable
+representation in a room.
+
+**Client**:
+: An instant messaging agent instance associated with a specific user account on a
+specific device. For example, the mobile phone instance used by the user
+@alice@example.com.
+
+The rest of this document is separated into sections based on distinct
+handling requirements within the protocol. 
+
+# Primitives which request an exclusive resource
+
+Some primitives request use of an exclusive resource. These could be
+handled differently from other requests in a high availability environment.
+
+## Claiming a single-use KeyPackage
+
+Claiming single-use KeyPackages requires that the target's domain is online, that
+the requestor has consent to claim them, and there are sufficient
+KeyPackages uploaded by the client that are valid and have parameters that are
+compatible with the request.
+
+One provider should be able to claim all the KeyPackages needed by the original
+requestor, for all users in a target provider in a single request. For example,
+say Alice at provider A wants KeyPackages for:
+
+- Bobby at provider B
+- Betty at provider B
+- Bruce at provider B
+- Bella at provider B
+- Cathy at provider C
+- Carl at provider C
+
+Provider A should be able to send a single request to provider B, for
+KeyPackages for all of Bobby, Betty, Bruce, and Bella's clients.
+
+Below is the list of fields which should be provided when claiming KeyPackages:
+
+- user ID (or pseudonym ID) of requesting user
+- list of user IDs (only user IDs associated with the target provider)
+- intended room ID (optional)
+- list of MLS versions (or version mls10 if not provided)
+- ordered ciphersuite list (or the default ciphersuite if not provided)
+- any required capabilities (optional)
+
+If authorized, this should return a list of KeyPackages (which comply with the
+restrictions) for all clients of the requested users.
+
+If the requestor is authorized to request KeyPackages from the target user,
+there should be either an error or a KeyPackage for each client of the target user.
+
+For example, response from provider B:
+
+- Bobby
+  - client Bob1: KP
+  - client Bob2: KP
+  - client Bob3: KP
+- Betty
+  - client Betty1: KP
+  - client Betty2: no compatible KPs
+- Bruce: no consent to provide KPs
+- Bella: user deleted
+
+Note: A similar API could be used between clients and their own provider. If so,
+if the client requests KeyPackages for their own user, presumably the client
+wants KeyPackages for all of their clients except the requesting client.
+This guidance is out-of-scope for MIMI, but is a sufficient gotcha to merit a note.
+
+## Sending a Commit -
+
+Sending a Commit requires exclusive access to the group's epoch on the
+owning provider, which needs to be online and available. By exclusive access, we mean
+that if multiple otherwise valid commits are received for the same epoch,
+only one of them can be accepted.
+
+The most efficient way to send a Commit is as a Commit bundle.
+A Commit bundle consists of a Commit, GroupInfo, an optional Welcome, and
+enough information necessary so the responsible domain can provide the
+`ratchet_tree` associated with the group.
+
+~~~
+1       Commit
+0 or 1  Welcome
+1       GroupInfo
+1       ratchet_tree container
+~~~
+
+The Welcome is
+the Welcome that the Committer would send if the Commit is accepted, and the
+GroupInfo object is the new GroupInfo that would be valid in the new epoch if the
+Commit is accepted. The GroupInfo needs to include an external_pub extensions
+so it can be used for external joins in the new epoch if the Commit is accepted.
+
+If a Commit bundle is rejected because the epoch has already advanced,
+the Commit, and the tentative Welcome and
+GroupInfo need to be discarded by the requesting client. If the operation
+represented by the rejected Commit is still relevant, the requester can
+regenerate a new Commit bundle in the new epoch.
+
+The GroupInfo logically contains the following fields, nested as shown:
+
+- GroupInfo
+  - GroupContext
+    - MLS version
+    - ciphersuite
+    - group ID
+    - epoch
+    - tree hash
+    - transcript hash
+    - (GroupContext) extensions
+      - `required_capabilities`
+      - `external_sender`s
+      - `room_policy` (proposed extension)
+  - (GroupInfo) extensions
+    - `external_pub`
+    - `ratchet_tree` (optional)
+  - confirmation_tag
+  - signer
+  - signature
+
+The size of a GroupInfo without a `ratchet_tree` extension is relatively modest
+and need not vary with the number of clients in the group. Even if it includes
+a somewhat complicated `room_policy` extension (proposed), the size of that extension typically
+would not increase for each member of the group. By contrast, the `ratchet_tree`
+extension grows linearly with the number of clients in the group. Depending on
+the size of credentials used, it can easily grow to several megabytes for a large group.
+Therefore, the MIMI transport protocol should require that the `ratchet_tree` is
+conveyed outside of the GroupInfo.
+
+Instead of sending the `ratchet_tree` directly, we can include a `ratchet_tree` container
+object in the Commit bundle. This could have options for various ways to convey
+a `ratchet_tree`: a complete ratchet tree, a compressed version, a delta from or patch to the
+previous epoch's tree, or a reference to a separate service. This provides future
+proofing. We will need to also come to consensus on a mandatory-to-implement option.
+Including the entire tree is wasteful and likely to have real performance impacts for
+large groups; requiring that the provider compute the ratchet tree itself is likely a
+non-starter for providers with a high-volume of traffic.
+
+Note: Sending a Proposal does NOT require exclusive access to the epoch.
+Assume a group contains clients A, B, and C. A proposal from A to remove B
+and a proposal from B to remove A are independently valid proposals, but
+together they would be incompatible and the combination would be invalid.
+
+## Requesting the GroupInfo
+
+Requesting the GroupInfo from the owning provider requires the owning provider
+to be online, and requires that the requesting user has authorization to
+receive this (privacy sensitive) information. This request is expected to be
+followed immediately by a Commit bundle, except in cases like a sudden
+network loss or client crash.
+
+The owning provider should make the GroupInfo available to a single requestor
+for a short amount of time (ex: from a handful of seconds to 30 seconds). The
+provider might put other restrictions in place to preventing abuse of this
+primitive, for example denying repeated GroupInfo requests in the absense of
+corresponding Commits.
+
+The provider requesting the GroupInfo needs to be able to present an joining
+authorization passcode that was included by the joining user. For more discussion
+of joining links and codes, see {{join-codes}}.
+
+# Provisional events / messages
+
+Ordinary messages and a handful of other events need to be sent provisionally
+from non-owning providers to the owning provider for any room, as the owning
+provider still has the ability to refuse these messages or events.
+
+MLS application messages which are sent in the current epoch could be sent
+by a client Alice to provider A as a Commit is arriving at owning provider B.
+Provider A should still deliver the messages to provider B, which should accept
+messages from authorized members, even if the message is from a slightly older
+epoch. However, if the Commit removed Alice from the group, Alice's message
+should be rejected. In practice, most provisional messages sent in good faith
+will be accepted. Therefore the protocol should send these messages
+efficiently (in bulk) between providers and communicate rejections
+asynchronously.
+
+MLS Proposals should also be sent provisionally. If Alice sends a Proposal, Alice
+knows this Proposal was accepted or rejected only after receiving the Commit for
+the next epoch. The next Commit will either include the Proposal (indicating acceptance)
+or not (indicating rejection or incompatibility).
+
+# Fanout of events / messages
+
+Messages and events which have been accepted by the owning
+provider then need to be fanned-out to the relevant providers,
+which fan-out the messages and events to their relevant clients.
+Below are a list of events that would be fanned out:
+
+- application messages
+- commits
+- proposals
+- welcomes
+- room policy changes
+  - characteristics
+  - who is pre-authorized for each role
+  - who has which role
+- room destroyed
+- who has voice
+
+In commercial messaging deployments fanout messages among two providers
+could result in millions of messages per minute. Therefore it is crucial
+that fanout messages can be communicated and acknowledged in bulk.
+
+At their discretion (according to their policies), providers might also
+choose to inform other providers when users are deleted. For example, two
+closely federated enterprise IM systems might do this for all user deletions
+where the deleted user is present on a room owned by the other provider.
+In another model, large consumer providers might inform each other when a
+user was deleted due to spam or abuse.
+
+Regarding the ordering requirements of fanned-out messages:
+ 
+- Every message/event needs to be delivered. (At-least once delivery is acceptable.
+  Exactly once delivery is desirable.)
+- Events/messages are processed roughly in order
+- Application messages do not need to be delivered strictly in order.
+- Commits within the same group must be in-order relative to each other
+- Proposal referenced in a Commit must be delivered before or with the Commit
+
+Note: Clients might ask their own provider for MLS Commits, Proposals,
+Welcomes, and consent request/grant/reject information before other information,
+in order to display most recent messages without a long delay.
+
+# Directed Async requests
+
+Some primitives are requests that expect an eventual acknowledgment. For
+example, a client sending a knock request expects to receive some indication
+that the knock was received. Likewise, reporting spam or abuse must result in
+some acknowledgement. A related action (for a knock, being added to the room;
+for an abuse report, the user being deleted or banned) may never happen or may
+happen several days or even months later.
+
+For the consent primitive, the sender of a consent request should receive an
+acknowledgement that the request was received by the provider of the target
+user. For privacy reasons, the requestor should not know if the target user
+received or viewed the request. The original requestor will obviously find out
+about a consent accept, but a consent reject or block is typically not
+communicated to the rejected/blocked user (again for privacy reasons).
+
+The consent primitive needs to include the following:
+
+- the specific operation (a request for consent, a grant of consent, or a
+  rejection/revocation of consent);
+- the user ID of the user requesting consent;
+- the user ID of the target user; and
+- optionally, the room ID for which the consent was requested.
+
+If the consent primitive does not specify a room, it implies consent for
+any room. Note that a user could reject consent for any room even if there
+was a consent request for a specific room or even no consent request.
+
+For completeness, requests for permission to send messages (voice) and the
+corresponding grant voice and revoke voice primitives have a similar asynchronous
+form of operation. However, in a moderated room it is expected for each member to
+know if they have voice or not. Note that moderation is currently out-of-scope for
+MIMI.
+
+# Other requests
+
+## Search and discovery
+
+Adding a user to a group, or obtaining consent to contact a user in MIMI requires
+discovery of the user ID of the target user. Whether a user can be discovered/
+searched depends on the user's provider's policies and the user's configured
+preferences. Some users (for example a realtor or salesperson) may choose to be
+broadly searchable, while another user may allow only a search on a single
+specific field. The MIMI discovery protocol needs to provide a way to search for
+a user at a specific provider and should be able to indicate the specific field
+or fields that are being provided or searched:
+
+- user handle or nickname
+- email address
+- phone number
+- partial name search
+- search in the entire user profile
+- any specific field in the OpenID Connect "Standard Claims"
+- any specific field in a vCard
+
+## Attached files or assets
+
+Uploading a file to a room in a federated environment can
+use one of two models. Either each user uploads the file to their own provider, or
+every user uploads any files to the provider owning the room. Any member can
+download the files from the provider storing the file. 
+
+The MIMI message transport protocol could easily provide for both options.
+
+Note that in many enterprise
+environments it may not be possible for clients to use a link directly to or from
+the provider storing the file. It may need to be proxied through the client's
+provider.
+
+## Joining/Invite links and codes {#join-codes}
+
+Many messaging systems have a way to generate a link (sometimes represented as a
+QR Code) that is used to identify a room, find a room, or authorize a user to
+join a room. There are many variations in the behavior of links when they are
+generated. For example, some links merely point to the target room but do not
+grant any additional authorization for a joiner. Typically they include both the
+address of the room and some authorization. Authorization could apply only to the
+first client to join using that code, or to any number of users. It could also be
+limited in time, or require an additional out-of-band password/passphrase or
+role-based authorization.
+
+How a user generates or discovers such a link is out-of-scope of
+MIMI, however the way such a link is used to join a room across providers should
+be in scope, as it is a common mode of joining. 
+To be useful in an interoperable way, a link needs to embed the room ID (probably
+as a URI) and a code.
+The MIMI message transfer protocol would then include the code in a request for
+GroupInfo for the room. Then the GroupInfo could be used in an external join.
+
+A personal "introduction code" might also provide the user ID of a user, which
+could be used to request consent to communicate.
+
+## Current status information
+
+IM systems carry some types of information where only the most recent event
+may be needed. This could include (for example):
+
+- typing or composing status for a user
+- name of room / subject of room
+- user status / display name / nickname
+- user presence
+
+Note that presence is explicitly out-of-scope of MIMI. However the MIMI
+working group may discover that a message transfer primitive which only
+delivers the current status is useful and necessary.
+
+
+# Security Considerations
+
+Assumptions about authentication, privacy, and consent of individual users.
+
+Discussion of the end-to-middle problem.
+
+
+# IANA Considerations
+
+This document has no IANA actions.
+
+
+--- back
+
