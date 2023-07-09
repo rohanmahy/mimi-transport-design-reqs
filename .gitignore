@@ -4,7 +4,7 @@
 /node_modules/
 /package-lock.json
 .DS_Store
-.html
-.txt
-.xml
-.md~
+*.html
+*.txt
+*.xml
+*.md~
