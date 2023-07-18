@@ -1,6 +1,6 @@
 {
   "magic": "E!vIA5L86J2I",
-  "timestamp": "2023-07-16T00:42:52.246735+00:00",
+  "timestamp": "2023-07-18T00:56:56.689873+00:00",
   "repo": "rohan-wire/mimi-transport-design-reqs",
   "labels": [
     {
@@ -49,6 +49,23 @@
       "color": "ffffff"
     }
   ],
-  "issues": [],
+  "issues": [
+    {
+      "number": 1,
+      "id": "I_kwDOJ4L3I85rzIiH",
+      "title": "include relevant pending proposals with GroupInfo",
+      "url": "https://github.com/rohan-wire/mimi-transport-design-reqs/issues/1",
+      "state": "OPEN",
+      "author": "rohan-wire",
+      "authorAssociation": "OWNER",
+      "assignees": [],
+      "labels": [],
+      "body": "in Section 3.3, relevant pending proposals (ex: SelfRemove proposals) need to be included with the GroupInfo.",
+      "createdAt": "2023-07-17T20:28:19Z",
+      "updatedAt": "2023-07-17T20:28:19Z",
+      "closedAt": null,
+      "comments": []
+    }
+  ],
   "pulls": []
 }
